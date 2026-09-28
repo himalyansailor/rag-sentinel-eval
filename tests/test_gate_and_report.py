@@ -135,7 +135,7 @@ def test_markdown_report_contains_scores_deltas_and_evidence() -> None:
 def test_markdown_report_without_baseline_and_with_errors() -> None:
     report = make_report({F: 0.9}, errors=1, total=3)
     md = render_markdown(report, gate().evaluate(report), thresholds={F: 0.85})
-    assert "No baseline run found yet" in md
+    assert "No baseline run on `main` yet" in md
     assert "Samples with errors" in md
     assert "✅" in md
 

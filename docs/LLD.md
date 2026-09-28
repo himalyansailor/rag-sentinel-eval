@@ -543,7 +543,7 @@ exit code.
 | Job | Steps |
 |-----|-------|
 | `quality` | checkout → Poetry install (cached) → `ruff check` → `ruff format --check` → `mypy` → `pytest` (offline) |
-| `rag-eval` (needs `quality`) | install Ollama → restore model cache → `ollama pull` judge/generator/embedding models → restore history DB cache → `rag-sentinel evaluate` → append `summary.md` to job summary → sticky PR comment → upload artifacts → save history DB → fail job if exit code ≠ 0 |
+| `rag-eval` (needs `quality`) | install Ollama → restore model cache (only `main` saves it; the models are ~4 GB) → `ollama pull` judge/generator/embedding models → restore history DB cache → `rag-sentinel evaluate` → append `summary.md` to job summary → sticky PR comment → upload artifacts → save history DB → fail job if exit code ≠ 0 |
 
 The evaluate step records its exit code instead of failing immediately so that reports and
 comments are always published; the final step enforces the gate.

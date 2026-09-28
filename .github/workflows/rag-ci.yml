@@ -43,12 +43,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Poetry
         run: pipx install "poetry==${POETRY_VERSION}"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: poetry
@@ -68,7 +68,7 @@ jobs:
       - name: Pytest (offline)
         run: poetry run pytest --cov --cov-report=term --cov-report=xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
@@ -84,12 +84,12 @@ jobs:
       contents: read
       pull-requests: write # sticky PR comment with the scorecard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Poetry
         run: pipx install "poetry==${POETRY_VERSION}"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: poetry
@@ -98,8 +98,11 @@ jobs:
         run: poetry install --no-interaction --only main
 
       # ------------------------------------------------------------------ Ollama ---
-      - name: Cache Ollama models
-        uses: actions/cache@v4
+      # The models are ~4 GB and a repo gets 10 GB of cache, so only main writes this cache.
+      # PRs restore main's copy (caches from the default branch are visible to every PR).
+      - name: Restore Ollama models
+        id: ollama-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.ollama/models
           key: ollama-${{ runner.os }}-${{ env.SENTINEL_JUDGE__MODEL }}-${{ env.SENTINEL_PIPELINE__GENERATOR_MODEL }}-${{ env.SENTINEL_EMBEDDINGS__MODEL }}
@@ -123,11 +126,18 @@ jobs:
             ollama pull "$model"
           done
 
+      - name: Save Ollama models
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.ollama-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ runner.os }}-${{ env.SENTINEL_JUDGE__MODEL }}-${{ env.SENTINEL_PIPELINE__GENERATOR_MODEL }}-${{ env.SENTINEL_EMBEDDINGS__MODEL }}
+
       # ------------------------------------------------------------- history DB ---
       # Every run saves a new cache entry; restore-keys picks the newest one visible to this
       # ref (PRs can read main's caches), so the SQLite history — and the baseline — accumulate.
       - name: Restore evaluation history
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .sentinel
           key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}
@@ -162,14 +172,14 @@ jobs:
           always() && github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository &&
           hashFiles('reports/summary.md') != ''
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: rag-sentinel
           path: reports/summary.md
 
       - name: Upload evaluation artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rag-eval-${{ github.run_id }}
           path: |
@@ -178,11 +188,12 @@ jobs:
             .sentinel/history.db
             ollama.log
           if-no-files-found: warn
+          include-hidden-files: true # .sentinel/history.db lives in a dot-directory
           retention-days: 30
 
       - name: Save evaluation history
         if: always() && hashFiles('.sentinel/history.db') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .sentinel
           key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}

@@ -108,7 +108,7 @@ def render_markdown(
             f"({baseline.created_at:%Y-%m-%d %H:%M} UTC)."
         )
     else:
-        lines.append("No baseline run found yet — deltas will appear once `main` has history.")
+        lines.append("No baseline run on `main` yet, so there are no deltas to show.")
     lines.append(
         f"Errors: {report.error_count}/{report.sample_count} samples ({report.error_rate:.0%})."
     )
