@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Poetry
         run: pipx install "poetry==${POETRY_VERSION}"
@@ -84,7 +84,7 @@ jobs:
       contents: read
       pull-requests: write # sticky PR comment with the scorecard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Poetry
         run: pipx install "poetry==${POETRY_VERSION}"
