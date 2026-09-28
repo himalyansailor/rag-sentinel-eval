@@ -68,7 +68,7 @@ jobs:
       - name: Pytest (offline)
         run: poetry run pytest --cov --cov-report=term --cov-report=xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload evaluation artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rag-eval-${{ github.run_id }}
           path: |
