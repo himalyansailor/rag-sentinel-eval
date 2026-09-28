@@ -99,7 +99,7 @@ jobs:
 
       # ------------------------------------------------------------------ Ollama ---
       - name: Cache Ollama models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.ollama/models
           key: ollama-${{ runner.os }}-${{ env.SENTINEL_JUDGE__MODEL }}-${{ env.SENTINEL_PIPELINE__GENERATOR_MODEL }}-${{ env.SENTINEL_EMBEDDINGS__MODEL }}
@@ -127,7 +127,7 @@ jobs:
       # Every run saves a new cache entry; restore-keys picks the newest one visible to this
       # ref (PRs can read main's caches), so the SQLite history — and the baseline — accumulate.
       - name: Restore evaluation history
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .sentinel
           key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}
@@ -182,7 +182,7 @@ jobs:
 
       - name: Save evaluation history
         if: always() && hashFiles('.sentinel/history.db') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .sentinel
           key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}
