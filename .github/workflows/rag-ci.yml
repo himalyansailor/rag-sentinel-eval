@@ -1,0 +1,200 @@
+# RAG quality gate (docs/LLD.md §11.4)
+#
+#   quality   lint, format, strict typing and the offline unit suite (no model server)
+#   rag-eval  run the golden set through the RAG pipeline, judge it with an open-source LLM
+#             on Ollama, publish the report, and FAIL the build if faithfulness < 0.85
+#
+# The evaluate step records its exit code instead of failing immediately, so the report,
+# PR comment and artifacts are always published; the last step enforces the gate.
+
+name: rag-ci
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rag-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  POETRY_VERSION: "2.5.1"
+  FAITHFULNESS_THRESHOLD: "0.85"
+  # Small CPU-friendly models. Generator and judge differ to reduce self-preference bias.
+  # On a self-hosted GPU runner, point SENTINEL_JUDGE__* at vLLM with a larger model instead.
+  SENTINEL_JUDGE__MODEL: "qwen2.5:3b"
+  SENTINEL_JUDGE__TIMEOUT_S: "300"
+  SENTINEL_PIPELINE__GENERATOR_MODEL: "llama3.2:3b"
+  SENTINEL_EMBEDDINGS__MODEL: "nomic-embed-text"
+  SENTINEL_EVALUATION__MAX_CONCURRENCY: "2"
+  SENTINEL_STORAGE__DB_PATH: ".sentinel/history.db"
+  SENTINEL_LOG_JSON: "true"
+
+jobs:
+  quality:
+    name: Lint, type-check, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Poetry
+        run: pipx install "poetry==${POETRY_VERSION}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Ruff (lint)
+        run: poetry run ruff check src tests --output-format github
+
+      - name: Ruff (format)
+        run: poetry run ruff format --check src tests
+
+      - name: Mypy (strict)
+        run: poetry run mypy src
+
+      - name: Pytest (offline)
+        run: poetry run pytest --cov --cov-report=term --cov-report=xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  rag-eval:
+    name: RAG evaluation gate
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: write # sticky PR comment with the scorecard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Poetry
+        run: pipx install "poetry==${POETRY_VERSION}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --only main
+
+      # ------------------------------------------------------------------ Ollama ---
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-${{ runner.os }}-${{ env.SENTINEL_JUDGE__MODEL }}-${{ env.SENTINEL_PIPELINE__GENERATOR_MODEL }}-${{ env.SENTINEL_EMBEDDINGS__MODEL }}
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          # The installer starts a systemd service with its own model dir; run our own
+          # server instead so models live in the cached ~/.ollama/models.
+          sudo systemctl stop ollama 2>/dev/null || true
+          OLLAMA_MODELS="$HOME/.ollama/models" nohup ollama serve > ollama.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:11434/api/tags > /dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::Ollama did not start"; cat ollama.log; exit 1
+
+      - name: Pull models
+        run: |
+          for model in "$SENTINEL_JUDGE__MODEL" "$SENTINEL_PIPELINE__GENERATOR_MODEL" "$SENTINEL_EMBEDDINGS__MODEL"; do
+            ollama pull "$model"
+          done
+
+      # ------------------------------------------------------------- history DB ---
+      # Every run saves a new cache entry; restore-keys picks the newest one visible to this
+      # ref (PRs can read main's caches), so the SQLite history — and the baseline — accumulate.
+      - name: Restore evaluation history
+        uses: actions/cache/restore@v4
+        with:
+          path: .sentinel
+          key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            sentinel-history-${{ github.head_ref || github.ref_name }}-
+            sentinel-history-main-
+            sentinel-history-
+
+      # --------------------------------------------------------------- evaluate ---
+      - name: Evaluate golden set
+        id: eval
+        run: |
+          set +e
+          poetry run rag-sentinel evaluate \
+            --dataset data/golden/golden_set.jsonl \
+            --threshold "faithfulness=${FAITHFULNESS_THRESHOLD}" \
+            --baseline-ref main \
+            --output-json reports/report.json \
+            --output-markdown reports/summary.md \
+            2> reports-eval.log
+          code=$?
+          echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+          tail -n 50 reports-eval.log
+
+      - name: Publish job summary
+        if: always() && hashFiles('reports/summary.md') != ''
+        run: cat reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        # Forked PRs get a read-only token; the job summary still carries the report.
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          hashFiles('reports/summary.md') != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rag-sentinel
+          path: reports/summary.md
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-${{ github.run_id }}
+          path: |
+            reports/
+            reports-eval.log
+            .sentinel/history.db
+            ollama.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Save evaluation history
+        if: always() && hashFiles('.sentinel/history.db') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .sentinel
+          key: sentinel-history-${{ github.ref_name }}-${{ github.run_id }}
+
+      # ------------------------------------------------------------ enforce gate ---
+      - name: Enforce quality gate
+        env:
+          EXIT_CODE: ${{ steps.eval.outputs.exit_code }}
+        run: |
+          case "$EXIT_CODE" in
+            0) echo "Quality gate passed." ;;
+            1) echo "::error title=RAG quality gate failed::Faithfulness (or another gated metric) fell below its threshold. See the job summary."; exit 1 ;;
+            2) echo "::error title=RAG evaluation misconfigured::Configuration, dataset or model error (exit 2). See reports-eval.log."; exit 2 ;;
+            *) echo "::error title=RAG evaluation infrastructure error::Judge or pipeline unavailable (exit ${EXIT_CODE:-unknown}). See ollama.log."; exit 3 ;;
+          esac

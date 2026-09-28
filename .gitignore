@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# rag-sentinel outputs
+.sentinel/
+reports/
+reports-eval.log
+ollama.log
+
+# Local config
+.env
+.streamlit/secrets.toml
+.DS_Store
+.gstack/

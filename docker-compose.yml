@@ -1,0 +1,33 @@
+# docker compose up -d
+# docker compose exec ollama ollama pull qwen2.5:3b
+# docker compose exec ollama ollama pull llama3.2:3b
+# docker compose exec ollama ollama pull nomic-embed-text
+# docker compose run --rm dashboard rag-sentinel evaluate
+# open http://localhost:8501
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports: ["11434:11434"]
+    volumes: ["ollama-models:/root/.ollama"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      retries: 10
+
+  dashboard:
+    build: .
+    ports: ["8501:8501"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      SENTINEL_JUDGE__BASE_URL: http://ollama:11434
+      SENTINEL_EMBEDDINGS__BASE_URL: http://ollama:11434
+      SENTINEL_PIPELINE__BASE_URL: http://ollama:11434
+      SENTINEL_PIPELINE__GENERATOR_MODEL: llama3.2:3b
+      SENTINEL_STORAGE__DB_PATH: /app/.sentinel/history.db
+    volumes: ["sentinel-history:/app/.sentinel"]
+
+volumes:
+  ollama-models:
+  sentinel-history:
